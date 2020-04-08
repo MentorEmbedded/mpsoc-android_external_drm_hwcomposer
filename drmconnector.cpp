@@ -22,6 +22,7 @@
 #include <errno.h>
 #include <stdint.h>
 
+#include <cutils/properties.h>
 #include <log/log.h>
 #include <xf86drmMode.h>
 
@@ -114,6 +115,17 @@ bool DrmConnector::valid_type() const {
 int DrmConnector::UpdateModes() {
   int fd = drm_->fd();
 
+  // Sometimes connector/displays support resolutions which
+  // are too large for the GPU stack and can cause bandwidth issues.
+  // Try to workaround this by hwc.drm.max_width and hwc.drm.max_height.
+  // If set, they are defining limits for the supported width and height.
+  char max_width_prop[PROPERTY_VALUE_MAX];
+  char max_height_prop[PROPERTY_VALUE_MAX];
+  property_get("hwc.drm.max_width", max_width_prop, "0");
+  property_get("hwc.drm.max_height", max_height_prop, "0");
+  uint32_t max_width = atoi(max_width_prop);
+  uint32_t max_height = atoi(max_height_prop);
+
   drmModeConnectorPtr c = drmModeGetConnector(fd, id_);
   if (!c) {
     ALOGE("Failed to get connector %d", id_);
@@ -126,6 +138,13 @@ int DrmConnector::UpdateModes() {
   std::vector<DrmMode> new_modes;
   for (int i = 0; i < c->count_modes; ++i) {
     bool exists = false;
+
+    // filter out modes with too big width or height
+    if (max_width && c->modes[i].hdisplay > max_width)
+      continue;
+    if (max_height && c->modes[i].vdisplay > max_height)
+      continue;
+
     for (const DrmMode &mode : modes_) {
       if (mode == c->modes[i]) {
         new_modes.push_back(mode);
